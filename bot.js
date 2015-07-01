@@ -316,11 +316,11 @@ Bot.prototype.commands.admin.stop = function(user, channel, args) {
         var pcInFavour = (votes.ayes / (votes.ayes + votes.nays) * 100).toFixed(2);
 
         if (total < quorum) {
-            this.client.notice(channel, "*** Result: Quorum of " + quorum + " not met.");
+            this.client.notice(channel, "*** Result: Motion lapses. Quorum of " + quorum + " not met.");
         } else if (votes.ayes - votes.nays > 0) {
-            this.client.notice(channel, "*** Result: " + pcInFavour + "% in favour. Motion carries.");
+            this.client.notice(channel, "*** Result: Motion carries. " + pcInFavour + "% in favour.");
         } else {
-            this.client.notice(channel, "*** Result: " + pcInFavour + "% in favour. Motion lapses.");
+            this.client.notice(channel, "*** Result: Motion lapses. " + pcInFavour + "% in favour.");
         }
 
         this.stateData[channel].motion = {

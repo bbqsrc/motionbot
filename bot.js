@@ -73,7 +73,7 @@ function Bot(db, server, name, opts) {
         } else {
             self.stateData[channel].states.forEach(function(state) {
                 self.listeners[state].forEach(function(func) {
-                    func.call(self, user, channel, message);
+                    func.call(self, user, channel, message, userObj);
                 });
             });
         }
@@ -92,16 +92,18 @@ Bot.prototype.commands = {
 
 Bot.prototype.listeners = {
     // states go here, and listener hooks in a list
-    motion: [function(user, channel, message) {
+    motion: [function(user, channel, message, userObj) {
         var value;
 
         message = message.trim().toLowerCase();
 
         if (message == "aye" || message == "nay" || message == "abstain") {
-            if (this.isRecognisedUser(user, channel) || this.isVoiced(user, channel)) {
+            if (this.isOperator(user, channel) || this.isVoiced(user, channel)) {
                 value = (message == "aye" ? true : message == "nay" ? false : null);
                 this.stateData[channel].motion.votes[user] = value;
-            };
+            } else {
+                this.client.notice(user, "You are not recognised; your vote has not been counted. If this a mistake, inform the operators.");
+            }
         }
     }]
 }

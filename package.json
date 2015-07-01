@@ -1,0 +1,24 @@
+{
+  "name": "motionbot",
+  "version": "1.0.0",
+  "description": "an IRC bot for handling motions",
+  "main": "bot.js",
+  "dependencies": {
+    "irc": "^0.3.6",
+    "mongodb": "^2.0.35"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bbqsrc/motionbot.git"
+  },
+  "author": "Brendan Molloy",
+  "license": "CC0",
+  "bugs": {
+    "url": "https://github.com/bbqsrc/motionbot/issues"
+  },
+  "homepage": "https://github.com/bbqsrc/motionbot"
+}

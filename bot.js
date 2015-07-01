@@ -1,8 +1,5 @@
-//var Q = require('q'),
-//    Db = require('mongodb').Db,
-//    MongoClient = require('mongodb').MongoClient,
-var irc = require('irc');
-
+var irc = require('irc'),
+    MongoClient = require('mongodb').MongoClient;
 
 String.prototype.startsWith = function(starter) {
     return new RegExp("^" + starter).test(this);
@@ -30,13 +27,15 @@ function isCommand(message, ctrl, cmd) {
 }
 
 
-function Bot(server, name, opts) {
+function Bot(db, server, name, opts) {
     var client = this.client = new irc.Client(server, name, opts),
         self = this;
 
+    this.name = name;
     this.debug = true;
     this.ctrl = '!';
     this.stateData = {};
+    this.db = db;
 
     opts.channels.forEach(function(chan) {
         self.onJoin(chan);
@@ -48,7 +47,7 @@ function Bot(server, name, opts) {
         }
     });
 
-    client.addListener('message', function(user, channel, message) {
+    client.addListener('message', function(user, channel, message, userObj) {
         var o;
 
         console.log(arguments);
@@ -66,9 +65,9 @@ function Bot(server, name, opts) {
 
             if (self.commands.all[o.command]) {
                 self.commands.all[o.command].call(self, user, channel, o.args);
-            } else if (self.isRecognisedUser(user, channel) && self.commands.recognised[o.command]) {
+            } else if (self.isRecognisedUser(userObj, channel) && self.commands.recognised[o.command]) {
                 self.commands.recognised[o.command].call(self, user, channel, o.args);
-            } else if (self.isAdminUser(user, channel) && self.commands.admin[o.command]) {
+            } else if (self.isAdminUser(userObj, channel) && self.commands.admin[o.command]) {
                 self.commands.admin[o.command].call(self, user, channel, o.args);
             }
         } else {
@@ -99,7 +98,7 @@ Bot.prototype.listeners = {
         message = message.trim().toLowerCase();
 
         if (message == "aye" || message == "nay" || message == "abstain") {
-            if (this.isRecognisedUser(user, channel)) {
+            if (this.isRecognisedUser(user, channel) || this.isVoiced(user, channel)) {
                 value = (message == "aye" ? true : message == "nay" ? false : null);
                 this.stateData[channel].motion.votes[user] = value;
             };
@@ -108,38 +107,63 @@ Bot.prototype.listeners = {
 }
 
 /* BOT SNACKS */
+Bot.prototype.initPersistence = function(channel) {
+    var botName = this.name;
+    var self = this;
 
-Bot.prototype.addRecognisedUser = function(user) {
-    // TODO: hook up to mongo
+    this.db.collection('recognised').findOne({
+        bot: botName, channel: channel
+    }, function(err, res) {
+        if (err) throw err;
 
+        if (res == null) {
+            self.db.collection('recognised').insert({
+                bot: botName,
+                channel: channel,
+                users: []
+            });
+        }
+    });
 }
 
-Bot.prototype.addAdminUser = function(user) {
-    // TODO: hook up to mongo
-
+Bot.prototype.getRecognisedUsers = function(channel, callback) {
+    var botName = this.name;
+    this.db.collection('recognised').findOne({
+        bot: botName, channel: channel
+    }, callback);
 }
 
-Bot.prototype.removeRecognisedUser = function(user) {
-    // TODO: hook up to mongo
+Bot.prototype.addRecognisedUser = function(userObj, channel) {
+    var user = userObj.user + "!" + userObj.host;
+    var botName = this.name;
 
+    if (this.isRecognisedUser(userObj, channel)) {
+        return;
+    }
+
+    this.db.collection('recognised').update({
+        bot: botName, channel: channel
+    }, {
+        $push: {
+            users: user
+        }
+    });
 }
 
-Bot.prototype.removeAdminUser = function(user) {
-    // TODO: hook up to mongo
-
+Bot.prototype.isRecognisedUser = function(userObj, channel) {
+    var user = userObj.user + "!" + userObj.host;
+    return this.stateData[channel].recognised.indexOf(user) > -1;
 }
 
-Bot.prototype.isRecognisedUser = function(user, channel) {
-    // TODO: hook up to mongo
-    return true;
-}
-
-Bot.prototype.isAdminUser = function(user, channel) {
-    // TODO: hook up to mongo
-    return true;
+Bot.prototype.isAdminUser = function(userObj, channel) {
+    return this.isOperator(userObj.nick, channel);
 }
 
 Bot.prototype.onJoin = function(channel) {
+    var self = this;
+    // TODO potential race condition
+    this.initPersistence(channel);
+
     this.stateData[channel] = {
         recognised: [],
         mode: "simple",
@@ -154,7 +178,15 @@ Bot.prototype.onJoin = function(channel) {
             votes: []
         },
         states: []
-    }
+    };
+
+    this.getRecognisedUsers(channel, function(err, res) {
+        if (err) throw err;
+
+        if (res != null) {
+            self.stateData[channel].recognised = res.users;
+        }
+    });
 }
 
 Bot.prototype.isOperator = function(name, channel) {
@@ -404,6 +436,7 @@ Bot.prototype.commands.admin.add = function(user, channel, args) {
         self = this;
 
     self.client.whois(nick, function(data) {
+        self.addRecognisedUser(data, channel);
         self.stateData[channel].recognised.push(data.user + "!" + data.host);
         self.client.send("MODE", channel, "+v", nick);
     });
@@ -413,6 +446,9 @@ if (process.argv.length < 5) {
     console.log("Usage: bot.js [name] [server] [channel]");
 } else {
     console.log(process.argv);
-    new Bot(process.argv[3], process.argv[2], {channels: [process.argv[4]]});
+    MongoClient.connect("mongodb://localhost:27017/motionbot", function(err, db) {
+        if (err) throw err;
+        new Bot(db, process.argv[3], process.argv[2], {channels: [process.argv[4]]});
+    });
 }
 

@@ -37,25 +37,29 @@ function Bot(server, name, opts) {
     this.debug = true;
     this.ctrl = '!';
     this.stateData = {};
-   
+
     opts.channels.forEach(function(chan) {
         self.onJoin(chan);
     });
 
     client.addListener('join', function(channel, nick, data) {
-        /*
-        if (recognise[channel] && recognise[channel].indexOf(data.user + "!" + data.host) > -1) {
+        if (self.stateData[channel].recognised.indexOf(data.user + "!" + data.host) > -1) {
             client.send("MODE", channel, "+v", nick);
         }
-        */
     });
-    
+
     client.addListener('message', function(user, channel, message) {
         var o;
 
+        console.log(arguments);
+
+        if (channel == name) {
+            return;
+        }
+
         if (isCommand(message, self.ctrl)) {
             o = parseCommand(message, self.ctrl) || {};
-            
+
             if (self.debug) {
                 console.log(o);
             }
@@ -72,8 +76,12 @@ function Bot(server, name, opts) {
                 self.listeners[state].forEach(function(func) {
                     func.call(self, user, channel, message);
                 });
-            });   
+            });
         }
+    });
+
+    client.addListener('error', function(error) {
+        console.error("Error: ", error);
     });
 }
 
@@ -87,6 +95,8 @@ Bot.prototype.listeners = {
     // states go here, and listener hooks in a list
     motion: [function(user, channel, message) {
         var value;
+
+        message = message.trim().toLowerCase();
 
         if (message == "aye" || message == "nay" || message == "abstain") {
             if (this.isRecognisedUser(user, channel)) {
@@ -159,7 +169,7 @@ Bot.prototype.commands.admin.start = function(user, channel, args) {
     if (args[0] == "meeting") {
         this.stateData[channel].meeting.started = true;
         this.client.notice(channel, "*** Meeting started.");
-        
+
         if (this.stateData[channel].meeting.name) {
             return;
         }
@@ -175,7 +185,7 @@ Bot.prototype.commands.admin.start = function(user, channel, args) {
         if (this.stateData[channel].states.indexOf('motion') > -1) {
             return;
         }
-        
+
         this.stateData[channel].states.push("motion");
         this.client.notice(channel, '*** MOTION: ' + this.stateData[channel].motion.text);
         this.client.notice(channel, '*** Put by: ' + this.stateData[channel].motion.putBy);
@@ -183,28 +193,51 @@ Bot.prototype.commands.admin.start = function(user, channel, args) {
     }
 }
 
+Bot.prototype.commands.admin.cancel = function(user, channel, args) {
+    if (args[0] == "motion") {
+        this.stateData[channel].motion = {
+            text: null,
+            putBy: null,
+            votes: []
+        };
+
+        this.stateData[channel].states.remove("motion");
+
+        this.client.notice(channel, "*** Motion cancelled.");
+    } else {
+        this.client.notice(channel, "*** Unknown argument.");
+    }
+}
+
 Bot.prototype.commands.admin.stop = function(user, channel, args) {
-    var i, ayes = [], nays = [], abstains = [];
+    var i, ayes = [], nays = [], abstains = [],
+        votes = { ayes: 0, nays: 0, abstains: 0 },
+        extraAyes = 0, extraNays = 0;
 
     if (args[0] == "meeting") {
         if (!this.stateData[channel].meeting.started) {
             // XXX make it error as there is no meeting
         }
-        
+
         // TODO save the meeting data
-        
+
         this.stateData[channel].meeting = {
-            name: null, started: false   
+            name: null, started: false
         };
 
         this.client.notice(channel, "*** Meeting ended.");
 
     } else if (args[0] == "motion") {
+        if (this.stateData[channel].states.indexOf('motion') == -1) {
+            this.client.notice(channel, "*** There is no motion to stop.");
+            return;
+        }
+
         for (var nick in this.stateData[channel].motion.votes) {
             if (!this.client.chans[channel].users[nick]) {
                 continue;
             }
-    
+
             if (this.stateData[channel].motion.votes[nick] == true) {
                 ayes.push(nick);
             } else if (this.stateData[channel].motion.votes[nick] == false) {
@@ -213,25 +246,49 @@ Bot.prototype.commands.admin.stop = function(user, channel, args) {
                 abstains.push(nick);
             }
         }
-    
-        this.client.notice(channel, "*** Ayes: " + ayes.length + " (" + ayes.join(", ") +
-                "); Nays: " + nays.length + " (" + nays.join(", ") +
-                "); Abstains: " + abstains.length + " (" + abstains.join(", ") + ")");
-       
-        if (ayes.length + nays.length + abstains.length < this.stateData[channel].quorum) {
-            this.client.notice(channel, "*** Quorum not met.");
-        } else if (ayes.length - nays.length > 0) {
-            this.client.notice(channel, "*** Motion carries.");
-        } else {
-            this.client.notice(channel, "*** Motion lapses.");
+
+        extraAyes = this.stateData[channel].motion.extraAyes || 0;
+        extraNays = this.stateData[channel].motion.extraNays || 0;
+
+        votes.ayes = ayes.length + extraAyes;
+        votes.nays = nays.length + extraNays;
+        votes.abstains = abstains.length;
+
+        this.client.notice(channel, "*** Votes");
+        this.client.notice(channel, "Ayes: " + (ayes.join(", ") || "none") +
+                "; Nays: " + (nays.join(", ") || "none") +
+                "; Abstains: " + (abstains.join(", ") || "none"));
+
+        if (extraAyes > 0 || extraNays > 0) {
+            this.client.notice(channel, "[+] External ayes: " + extraAyes +
+                               "; External nays: " + extraNays);
         }
-        
+
+        var total = votes.ayes + votes.nays + votes.abstains;
+        var quorum = this.stateData[channel].meeting.quorum;
+
+        this.client.notice(channel, "*** Tally");
+        this.client.notice(channel, "Ayes: " + votes.ayes + "; Nays: " +
+                           votes.nays + "; Abstains: " + votes.abstains +
+                           "; TOTAL: " + total);
+
+
+        var pcInFavour = (votes.ayes / (votes.ayes + votes.nays) * 100).toFixed(2);
+
+        if (total < quorum) {
+            this.client.notice(channel, "*** Result: Quorum of " + quorum + " not met.");
+        } else if (votes.ayes - votes.nays > 0) {
+            this.client.notice(channel, "*** Result: " + pcInFavour + "% in favour. Motion carries.");
+        } else {
+            this.client.notice(channel, "*** Result: " + pcInFavour + "% in favour. Motion lapses.");
+        }
+
         this.stateData[channel].motion = {
             text: null,
             putBy: null,
             votes: []
         };
-        
+
         this.stateData[channel].states.remove("motion");
     }
 }
@@ -253,7 +310,7 @@ Bot.prototype.commands.admin.meeting = function(user, channel, args) {
 
 Bot.prototype.commands.admin.motion = function(user, channel, args) {
     var i, ayes = [], nays = [], abstains = [];
-    
+
     // args: start, stop, cancel
     if (!this.stateData[channel].meeting.started) {
         this.client.notice(channel, "*** No meeting started.");
@@ -274,23 +331,84 @@ Bot.prototype.commands.admin.motion = function(user, channel, args) {
 }
 
 Bot.prototype.commands.admin.quorum = function(user, channel, args) {
+    // args: start, stop, cancel
     if (!this.stateData[channel].meeting.started) {
-        // XXX make it error as there is no meeting
+        this.client.notice(channel, "*** No meeting started.");
+        return;
     }
-    
     if (args.length < 1) {
-        // XXX
+        this.client.notice(channel, "*** Quorum is: " +
+                           this.stateData[channel].meeting.quorum || 0);
     } else {
         this.stateData[channel].meeting.quorum = parseInt(args[0], 10);
         this.client.notice(channel, "*** Quorum now set to: " + parseInt(args[0], 10));
     }
 }
 
-Bot.prototype.commands.admin.recognise = function(user, channel, args) {
-    // args: <nick>
+Bot.prototype.commands.admin.ayes = function(user, channel, args) {
+    if (!this.stateData[channel].meeting.started) {
+        this.client.notice(channel, "*** No meeting started.");
+        return;
+    }
+
+    if (this.stateData[channel].states.indexOf('motion') == -1) {
+        this.client.notice(channel, "*** No motion started.");
+        return;
+    }
+
+    var x = parseInt(args[0], 10);
+
+    if (x !== x) { // NaN check
+        this.client.notice(channel, "*** Invalid input.");
+        return;
+    }
+
+    this.stateData[channel].motion.extraAyes = x;
+    this.client.notice(channel, "*** Extra ayes: " + x);
+
 }
 
-new Bot('au.pirateirc.net', 'MotionBot', {channels: ['#ppau-nc']});
+
+Bot.prototype.commands.admin.nays = function(user, channel, args) {
+    if (!this.stateData[channel].meeting.started) {
+        this.client.notice(channel, "*** No meeting started.");
+        return;
+    }
+
+    if (this.stateData[channel].states.indexOf('motion') == -1) {
+        this.client.notice(channel, "*** No motion started.");
+        return;
+    }
+
+    var x = parseInt(args[0], 10);
+
+    if (x !== x) { // NaN check
+        this.client.notice(channel, "*** Invalid input.");
+        return;
+    }
+
+    this.stateData[channel].motion.extraNays = x;
+    this.client.notice(channel, "*** Extra nays: " + x);
+
+}
+
+Bot.prototype.commands.admin.add = function(user, channel, args) {
+    // args: <nick>
+    var nick = args[0],
+        self = this;
+
+    self.client.whois(nick, function(data) {
+        self.stateData[channel].recognised.push(data.user + "!" + data.host);
+        self.client.send("MODE", channel, "+v", nick);
+    });
+}
+
+if (process.argv.length < 5) {
+    console.log("Usage: bot.js [name] [server] [channel]");
+} else {
+    console.log(process.argv);
+    new Bot(process.argv[3], process.argv[2], {channels: [process.argv[4]]});
+}
 
 /*
 var irc = require('irc');
@@ -310,13 +428,13 @@ function isOperator(name, channel) {
 }
 
 function isVoiced(name, channel) {
-    return client.chans[channel] && 
+    return client.chans[channel] &&
         (client.chans[channel].users[name] == "@" ||
-         client.chans[channel].users[name] == "+"); 
+         client.chans[channel].users[name] == "+");
 }
 
 function hasMotionPower(name, channel) {
-    return mode == "o" ? isOperator(name, channel) : 
+    return mode == "o" ? isOperator(name, channel) :
            mode == "v" ? isVoiced(name, channel) : false;
 }
 
@@ -401,7 +519,7 @@ client.addListener('message', function(from, to, message) {
                 votes[to] = {};
             }
         }
-        
+
         if (isOperator(from, to)) {
             if (command.command == "quorum") {
                 quorum = parseInt(command.args, 10);
@@ -419,7 +537,7 @@ client.addListener('message', function(from, to, message) {
             }
         }
     }
-    
+
     if (state == "motion") {
         if (message == "aye" || message == "nay" || message == "abstain") {
             if (isVoiced(from, to)) {

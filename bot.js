@@ -110,26 +110,32 @@ Bot.prototype.listeners = {
 /* BOT SNACKS */
 
 Bot.prototype.addRecognisedUser = function(user) {
+    // TODO: hook up to mongo
 
 }
 
 Bot.prototype.addAdminUser = function(user) {
+    // TODO: hook up to mongo
 
 }
 
 Bot.prototype.removeRecognisedUser = function(user) {
+    // TODO: hook up to mongo
 
 }
 
 Bot.prototype.removeAdminUser = function(user) {
+    // TODO: hook up to mongo
 
 }
 
 Bot.prototype.isRecognisedUser = function(user, channel) {
+    // TODO: hook up to mongo
     return true;
 }
 
 Bot.prototype.isAdminUser = function(user, channel) {
+    // TODO: hook up to mongo
     return true;
 }
 
